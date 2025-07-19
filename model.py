@@ -75,6 +75,7 @@ class UNet(nn.Module):
         
         # Output: 1 HSV frame = 3 channels
         self.outc = nn.Conv2d(model_size, 3, kernel_size=1)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         # x shape: (batch, 6, height, width) - 2 HSV frames concatenated
@@ -97,7 +98,7 @@ class UNet(nn.Module):
         x = self.up6(x, x1)
         
         # Output: (batch, 3, height, width) - 1 HSV frame
-        return self.outc(x)
+        return self.sigmoid(self.outc(x))
 
 
 def create_unet(frame_width=64, frame_height=64, model_size=64):

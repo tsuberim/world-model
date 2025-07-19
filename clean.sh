@@ -1,0 +1,1 @@
+rm -rf frames videos checkpoints output

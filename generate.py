@@ -57,7 +57,7 @@ def generate_video(model, initial_frames, num_frames=100, device='cpu'):
     return generated_frames
 
 
-def save_video(frames, output_path='generated_video.mp4', frame_rate=30):
+def save_video(frames, output_path='generated_video.mp4', frame_rate=6):
     """Save generated frames as video file"""
     if not frames:
         print("No frames to save")
@@ -82,7 +82,7 @@ def save_video(frames, output_path='generated_video.mp4', frame_rate=30):
         output_path = output_path.replace('.mp4', '.avi')
         out = cv2.VideoWriter(output_path, fourcc, frame_rate, (width, height))
     
-    print(f"Saving video to {output_path}...")
+    print(f"Saving video to {output_path} at {frame_rate} FPS...")
     
     for i, frame in enumerate(frames):
         frame_bgr = hsv_to_bgr(frame)
@@ -94,7 +94,7 @@ def save_video(frames, output_path='generated_video.mp4', frame_rate=30):
             print(f"Saved {i + 1}/{len(frames)} frames")
     
     out.release()
-    print(f"Video saved to {output_path}")
+    print(f"Video saved to {output_path} at {frame_rate} FPS")
 
 
 def main():
@@ -109,7 +109,7 @@ def main():
                        help='Model size')
     parser.add_argument('--num-frames', type=int, default=100, 
                        help='Number of frames to generate')
-    parser.add_argument('--frame-rate', type=int, default=30, 
+    parser.add_argument('--frame-rate', type=int, default=6, 
                        help='Frame rate for video')
     parser.add_argument('--output-path', default='output/generated_video.mp4', 
                        help='Output video path')
@@ -134,9 +134,9 @@ def main():
         print(f"Checkpoint file not found: {args.checkpoint}")
         return
     
-    # Create initial frames (random HSV frames)
+    # Create initial frames (random normalized HSV frames)
     print("Creating initial frames...")
-    initial_frames = torch.randn(6, args.frame_height, args.frame_width, device=device)  # 2 HSV frames
+    initial_frames = torch.rand(6, args.frame_height, args.frame_width, device=device)  # 2 HSV frames in [0, 1]
     
     # Generate video
     generated_frames = generate_video(model, initial_frames, args.num_frames, device)
