@@ -264,12 +264,7 @@ def pixel_loss(pred, target, attention_mask):
     return raw_pixel_loss + entropy_loss
 
 youtube_video_urls = [
-    "https://www.youtube.com/watch?v=V-mwW526RVU",
-    "https://www.youtube.com/watch?v=Tyi5S76cZ-s",
-    "https://www.youtube.com/watch?v=d_WFTzQYJ7g",
-    "https://www.youtube.com/watch?v=0fts6x_EE_E",
-    "https://www.youtube.com/watch?v=BSaOoL6Dte4",
-    "https://www.youtube.com/watch?v=ICJvn8h4I7g"
+    "https://www.youtube.com/watch?v=YJbegTHnWhg",
 ]
 
 def main():
@@ -293,6 +288,8 @@ def main():
                        help='Weight decay for L2 regularization')
     parser.add_argument('--dropout-rate', type=float, default=0.1, 
                        help='Dropout rate for regularization')
+    parser.add_argument('--num-workers', type=int, default=4, 
+                       help='Number of workers for data loading')
     
     args = parser.parse_args()
     
@@ -300,9 +297,20 @@ def main():
     device = 'mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
+    # Check for multiple GPUs
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        print(f"Found {torch.cuda.device_count()} GPUs, using DataParallel")
+        device = 'cuda'
+    
     # Create model
     model = create_unet(frame_width=args.frame_width, frame_height=args.frame_height, model_size=args.model_size,
                        dropout_rate=args.dropout_rate, weight_decay=args.weight_decay)
+    
+    # Move model to device and wrap with DataParallel if multiple GPUs
+    model = model.to(device)
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(model)
+        print("Model wrapped with DataParallel")
     
     # Print number of parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -319,7 +327,21 @@ def main():
     if os.path.exists('checkpoints/latest.pth'):
         print("Loading latest checkpoint to resume training...")
         checkpoint = torch.load('checkpoints/latest.pth', map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        
+        # Handle DataParallel state dict keys
+        model_state_dict = checkpoint['model_state_dict']
+        if isinstance(model, torch.nn.DataParallel):
+            # Remove 'module.' prefix from checkpoint keys if present
+            new_state_dict = {}
+            for key, value in model_state_dict.items():
+                if key.startswith('module.'):
+                    new_key = key[7:]  # Remove 'module.' prefix
+                    new_state_dict[new_key] = value
+                else:
+                    new_state_dict[key] = value
+            model_state_dict = new_state_dict
+        
+        model.load_state_dict(model_state_dict, strict=False)
 
         try:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -397,8 +419,10 @@ def main():
             train_dataset = VideoFrameDataset(X_train, y_train)
             test_dataset = VideoFrameDataset(X_test, y_test)
             
-            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-            test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+            train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, 
+                                    num_workers=args.num_workers, pin_memory=True)
+            test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False,
+                                   num_workers=args.num_workers, pin_memory=True)
             
             # Train model on this video for one epoch
             result = train_single_epoch(
