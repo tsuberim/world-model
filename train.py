@@ -297,7 +297,7 @@ def main():
                        help='Dropout rate for regularization')
     parser.add_argument('--num-workers', type=int, default=4, 
                        help='Number of workers for data loading')
-    parser.add_argument('--use-attention-mask', action='store_tru', default=False,
+    parser.add_argument('--use-attention-mask', action='store_true', default=False,
                        help='Use attention masking in loss computation')
     
     args = parser.parse_args()
