@@ -269,9 +269,10 @@ def pixel_loss(pred, target, attention_mask, use_attention_mask=True):
         return raw_pixel_loss
 
 youtube_video_urls = [
-    "https://www.youtube.com/watch?v=YJbegTHnWhg",
-    "https://www.youtube.com/watch?v=oo9c9HC-pmM",
-    "https://www.youtube.com/watch?v=DSsf9pQkDt8",
+    "https://www.youtube.com/watch?v=uKY3Z5F1HF8",
+    "https://www.youtube.com/watch?v=WUtB57qawoo",
+    "https://www.youtube.com/watch?v=LpIDd9El5lM",
+    "https://www.youtube.com/watch?v=8-F4ZwMNB-4",
 ]
 
 def main():
