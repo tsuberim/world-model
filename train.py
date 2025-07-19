@@ -289,7 +289,7 @@ def main():
                        help='Batch size for training')
     parser.add_argument('--num-epochs', type=int, default=100, 
                        help='Number of training epochs')
-    parser.add_argument('--learning-rate', type=float, default=0.001, 
+    parser.add_argument('--learning-rate', type=float, default=1e-4, 
                        help='Learning rate')
     parser.add_argument('--weight-decay', type=float, default=1e-4, 
                        help='Weight decay for L2 regularization')
