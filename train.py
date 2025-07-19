@@ -327,6 +327,16 @@ def main():
     
     # Initialize optimizer with weight decay
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    
+    # Initialize learning rate scheduler
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, 
+        mode='min', 
+        factor=0.5, 
+        patience=5, 
+        verbose=True,
+        min_lr=1e-6
+    )
 
     # Load latest checkpoint if exists
     start_epoch = 0
@@ -355,6 +365,14 @@ def main():
         except:
             print("Optimizer state dict not found, initializing new optimizer")
             optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+        
+        try:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        except:
+            print("Scheduler state dict not found, initializing new scheduler")
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode='min', factor=0.5, patience=5, verbose=True, min_lr=1e-6
+            )
         
         # Move optimizer state to correct device
         for state in optimizer.state.values():
@@ -455,10 +473,16 @@ def main():
         
         print(f'\nEpoch {epoch+1}/{args.num_epochs} Summary: Train Loss: {epoch_train_loss:.6f}, Val Loss: {epoch_val_loss:.6f}')
         
+        # Step the scheduler based on validation loss
+        scheduler.step(epoch_val_loss)
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f'Current learning rate: {current_lr:.2e}')
+        
         # Log to wandb
         wandb.log({
             "train_loss": epoch_train_loss,
             "val_loss": epoch_val_loss,
+            "learning_rate": current_lr,
         })
         
         # Log sample predictions every 5 epochs
@@ -490,6 +514,7 @@ def main():
             'epoch': epoch + 1,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
             'train_loss': epoch_train_loss,
             'val_loss': epoch_val_loss,
             'wandb_run_id': wandb.run.id,
