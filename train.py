@@ -280,7 +280,7 @@ def main():
                        help='Frame height')
     parser.add_argument('--model-size', type=int, default=48, 
                        help='Model size')
-    parser.add_argument('--batch-size', type=int, default=32, 
+    parser.add_argument('--batch-size', type=int, default=64, 
                        help='Batch size for training')
     parser.add_argument('--num-epochs', type=int, default=100, 
                        help='Number of training epochs')
