@@ -172,7 +172,6 @@ def hsv_to_rgb(hsv_frame):
 def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'):
     """Train the model for a single epoch on one video"""
     model = model.to(device)
-    criterion = nn.MSELoss()
     
     # Training
     model.train()
@@ -182,8 +181,12 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         sequences, targets = sequences.to(device), targets.to(device)
         
         optimizer.zero_grad()
-        loss, outputs = compute_loss(model, sequences, targets, criterion)
+        loss, outputs, attention_mask = compute_loss(model, sequences, targets)
         loss.backward()
+        
+        # Gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         optimizer.step()
         train_loss += loss.item()
         train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
@@ -193,12 +196,12 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
     val_loss = 0.0
     sample_predictions = []
     sample_targets = []
-    
+    sample_attention_masks = []
     with torch.no_grad():
         val_pbar = tqdm(val_loader, desc="Validation", leave=False)
         for sequences, targets in val_pbar:
             sequences, targets = sequences.to(device), targets.to(device)
-            loss, outputs = compute_loss(model, sequences, targets, criterion)
+            loss, outputs, attention_mask = compute_loss(model, sequences, targets)
             val_loss += loss.item()
             
             # Collect sample predictions for visualization
@@ -206,15 +209,16 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
                 for i in range(min(4 - len(sample_predictions), len(outputs))):
                     sample_predictions.append(outputs[i].cpu().numpy())
                     sample_targets.append(targets[i].cpu().numpy())
+                    sample_attention_masks.append(attention_mask[i].cpu().numpy())
     
     train_loss /= len(train_loader)
     val_loss /= len(val_loader)
     
     print(f'Video training complete: Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
     
-    return train_loss, val_loss, (sample_predictions, sample_targets) if sample_predictions else None
+    return train_loss, val_loss, (sample_predictions, sample_targets, sample_attention_masks) if sample_predictions else None
 
-def compute_loss(model, sequences, targets, criterion, mixing_rate = 0.85):
+def compute_loss(model, sequences, targets, mixing_rate = 0.85):
     loss = 0.0
     
     first_and_second_frames = sequences[:, :6, :, :]
@@ -225,32 +229,44 @@ def compute_loss(model, sequences, targets, criterion, mixing_rate = 0.85):
     fourth_frame = sequences[:, 9:, :, :]
 
     # predict 3rd frame using first and second frames
-    first_and_second_frames_output = model(first_and_second_frames)
-    loss += criterion(first_and_second_frames_output, third_frame)
+    first_and_second_frames_output, attention_mask_1 = model(first_and_second_frames)
+    loss += pixel_loss(first_and_second_frames_output, third_frame, attention_mask_1)
 
     # predict 4th frame using second and third frames (mixed with 3rd frame prediction)
     mixed_middle_frame = (1-mixing_rate)*second_and_third_frames[:, 3:, :, :] + (mixing_rate)*first_and_second_frames_output
     middle_input_frames = torch.cat([second_and_third_frames[:, :3, :, :], mixed_middle_frame], dim=1)
-    second_and_third_frames_output = model(middle_input_frames)
-    loss += criterion(second_and_third_frames_output, fourth_frame)
+    second_and_third_frames_output, attention_mask_2 = model(middle_input_frames)
+    loss += pixel_loss(second_and_third_frames_output, fourth_frame, attention_mask_2)
 
     # predict 5th frame using 3rd and 4th frames (mixed with 4th and 3rd frame prediction)
     mixed_frame_3 = (1-mixing_rate)*third_and_fourth_frames[:, :3, :, :] + (mixing_rate)*first_and_second_frames_output
     mixed_frame_4 = (1-mixing_rate)*third_and_fourth_frames[:, 3:, :, :] + (mixing_rate)*second_and_third_frames_output
     input_frames = torch.cat([mixed_frame_3, mixed_frame_4], dim=1)
-    target_prediction = model(input_frames)
-    loss += criterion(target_prediction, targets)
+    target_prediction, attention_mask_3 = model(input_frames)
+    loss += pixel_loss(target_prediction, targets, attention_mask_3)
 
-    return loss, target_prediction
+    return loss, target_prediction, attention_mask_3
 
+def pixel_loss(pred, target, attention_mask):
+    # mse loss weighted by attention mask
+    errors = (pred - target)**2
+    errors *= attention_mask
+    raw_pixel_loss = errors.sum()
+
+    # entropy loss to encourage spread out attention mask
+    epsilon = 1e-8  # Prevent log(0)
+    entropy = -(attention_mask * torch.log(attention_mask + epsilon)).sum(dim=(2,3))  # Sum over H,W dims
+    entropy_loss = - 0.1 * entropy.mean()
+
+    return raw_pixel_loss + entropy_loss
 
 youtube_video_urls = [
     "https://www.youtube.com/watch?v=V-mwW526RVU",
     "https://www.youtube.com/watch?v=Tyi5S76cZ-s",
     "https://www.youtube.com/watch?v=d_WFTzQYJ7g",
-    # "https://www.youtube.com/watch?v=0fts6x_EE_E",
-    # "https://www.youtube.com/watch?v=BSaOoL6Dte4",
-    # "https://www.youtube.com/watch?v=ICJvn8h4I7g"
+    "https://www.youtube.com/watch?v=0fts6x_EE_E",
+    "https://www.youtube.com/watch?v=BSaOoL6Dte4",
+    "https://www.youtube.com/watch?v=ICJvn8h4I7g"
 ]
 
 def main():
@@ -266,10 +282,14 @@ def main():
                        help='Model size')
     parser.add_argument('--batch-size', type=int, default=32, 
                        help='Batch size for training')
-    parser.add_argument('--num-epochs', type=int, default=50, 
+    parser.add_argument('--num-epochs', type=int, default=100, 
                        help='Number of training epochs')
     parser.add_argument('--learning-rate', type=float, default=0.001, 
                        help='Learning rate')
+    parser.add_argument('--weight-decay', type=float, default=1e-4, 
+                       help='Weight decay for L2 regularization')
+    parser.add_argument('--dropout-rate', type=float, default=0.1, 
+                       help='Dropout rate for regularization')
     
     args = parser.parse_args()
     
@@ -278,7 +298,8 @@ def main():
     print(f"Using device: {device}")
     
     # Create model
-    model = create_unet(frame_width=args.frame_width, frame_height=args.frame_height, model_size=args.model_size)
+    model = create_unet(frame_width=args.frame_width, frame_height=args.frame_height, model_size=args.model_size,
+                       dropout_rate=args.dropout_rate, weight_decay=args.weight_decay)
     
     # Print number of parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -286,8 +307,8 @@ def main():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
     
-    # Initialize optimizer
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    # Initialize optimizer with weight decay
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
     # Load latest checkpoint if exists
     start_epoch = 0
@@ -295,8 +316,13 @@ def main():
     if os.path.exists('checkpoints/latest.pth'):
         print("Loading latest checkpoint to resume training...")
         checkpoint = torch.load('checkpoints/latest.pth', map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+
+        try:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        except:
+            print("Optimizer state dict not found, initializing new optimizer")
+            optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
         
         # Move optimizer state to correct device
         for state in optimizer.state.values():
@@ -321,6 +347,8 @@ def main():
             "frame_width": model.frame_width,
             "frame_height": model.frame_height,
             "learning_rate": args.learning_rate,
+            "weight_decay": args.weight_decay,
+            "dropout_rate": args.dropout_rate,
             "num_epochs": args.num_epochs,
             "batch_size": args.batch_size,
         })
@@ -335,6 +363,7 @@ def main():
         epoch_val_loss = 0.0
         epoch_sample_predictions = []
         epoch_sample_targets = []
+        epoch_sample_attention_masks = []
         videos_processed = 0
         
         for video_idx, video_url in enumerate(args.video_urls):
@@ -369,9 +398,10 @@ def main():
             test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
             
             # Train model on this video for one epoch
-            video_train_loss, video_val_loss, video_samples = train_single_epoch(
+            result = train_single_epoch(
                 model, train_loader, test_loader, optimizer, device
             )
+            video_train_loss, video_val_loss, video_samples = result
             
             # Accumulate losses and samples
             epoch_train_loss += video_train_loss
@@ -379,7 +409,7 @@ def main():
             if video_samples:
                 epoch_sample_predictions.extend(video_samples[0])
                 epoch_sample_targets.extend(video_samples[1])
-            
+                epoch_sample_attention_masks.extend(video_samples[2])
             videos_processed += 1
         
         # Calculate average losses for the epoch
@@ -397,15 +427,26 @@ def main():
         
         # Log sample predictions every 5 epochs
         wandb_images = []
-        for i, (pred, target) in enumerate(zip(epoch_sample_predictions, epoch_sample_targets)):
+        for i, (pred, target, attention_mask) in enumerate(zip(epoch_sample_predictions, epoch_sample_targets, epoch_sample_attention_masks)):
             # Convert to RGB for wandb
             pred_rgb = hsv_to_rgb(pred)
             target_rgb = hsv_to_rgb(target)
+
+            # Convert attention mask to visible format
+            attention_squeezed = attention_mask.squeeze(0)  # Remove channel dimension (1, H, W) -> (H, W)
             
+            # Apply colormap for better visibility (hot colormap: black->red->yellow->white)
+            import matplotlib.pyplot as plt
+            import matplotlib.cm as cm
+            # Normalize to 0-1 and apply colormap
+            attention_norm = (attention_squeezed - attention_squeezed.min()) / (attention_squeezed.max() - attention_squeezed.min() + 1e-8)
+            attention_colored = cm.hot(attention_norm)
+            attention_rgb = (attention_colored[:, :, :3] * 255).astype(np.uint8)  # Remove alpha channel and convert to uint8
+
             # Create side-by-side comparison
-            comparison = np.concatenate([target_rgb, pred_rgb], axis=1)
-            wandb_images.append(wandb.Image(comparison, caption=f"Sample {i+1}: Target | Prediction"))
-        
+            comparison = np.concatenate([target_rgb, pred_rgb, attention_rgb], axis=1)
+            wandb_images.append(wandb.Image(comparison, caption=f"Sample {i+1}: Target | Prediction | Attention"))
+         
         wandb.log({"sample_predictions": wandb_images})
         
         # Save checkpoint after each epoch

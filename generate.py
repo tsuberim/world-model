@@ -8,7 +8,7 @@ from model import create_unet
 def load_checkpoint(checkpoint_path, model, device):
     """Load model from checkpoint"""
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
     model.eval()
     print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
     print(f"Training loss: {checkpoint['train_loss']:.6f}")
@@ -30,23 +30,26 @@ def hsv_to_bgr(hsv_frame):
 
 
 def generate_video(model, initial_frames, num_frames=100, device='cpu'):
-    """Generate video by iteratively predicting next frames"""
+    """Generate video by iteratively predicting next frames with attention masks"""
     model.eval()
     
     # Start with initial frames
     current_sequence = initial_frames.clone()
     generated_frames = []
+    attention_masks = []
     
     print(f"Generating {num_frames} frames...")
     
     with torch.no_grad():
         for i in range(num_frames):
             # Predict next frame
-            next_frame = model(current_sequence.unsqueeze(0).to(device))
+            next_frame, attention_mask = model(current_sequence.unsqueeze(0).to(device))
             next_frame = next_frame.squeeze(0)
+            attention_mask = attention_mask.squeeze(0)
             
-            # Add to generated frames (move to CPU for numpy conversion)
+            # Add to generated frames and attention masks (move to CPU for numpy conversion)
             generated_frames.append(next_frame.cpu().numpy())
+            attention_masks.append(attention_mask.cpu().numpy())
             
             # Update sequence: remove oldest frame, add predicted frame (keep on device)
             current_sequence = torch.cat([current_sequence[3:], next_frame], dim=0)
@@ -54,11 +57,11 @@ def generate_video(model, initial_frames, num_frames=100, device='cpu'):
             if (i + 1) % 10 == 0:
                 print(f"Generated {i + 1}/{num_frames} frames")
     
-    return generated_frames
+    return generated_frames, attention_masks
 
 
-def save_video(frames, output_path='generated_video.mp4', frame_rate=6):
-    """Save generated frames as video file"""
+def save_video(frames, attention_masks, output_path='generated_video.mp4', frame_rate=6):
+    """Save generated frames with attention masks as video file"""
     if not frames:
         print("No frames to save")
         return
@@ -67,28 +70,47 @@ def save_video(frames, output_path='generated_video.mp4', frame_rate=6):
     frame_bgr = hsv_to_bgr(frames[0])
     height, width = frame_bgr.shape[:2]
     
-    # Create video writer with H.264 codec
+    # Create video writer with H.264 codec (triple width for frame + attention)
     if output_path.endswith('.mp4'):
         fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264 codec
     else:
         fourcc = cv2.VideoWriter_fourcc(*'XVID')  # For .avi files
     
-    out = cv2.VideoWriter(output_path, fourcc, frame_rate, (width, height))
+    # Triple the width to accommodate frame + attention mask
+    out = cv2.VideoWriter(output_path, fourcc, frame_rate, (width * 2, height))
     
     if not out.isOpened():
         print("Error: Could not open video writer. Trying alternative codec...")
         # Fallback to XVID
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
         output_path = output_path.replace('.mp4', '.avi')
-        out = cv2.VideoWriter(output_path, fourcc, frame_rate, (width, height))
+        out = cv2.VideoWriter(output_path, fourcc, frame_rate, (width * 2, height))
     
     print(f"Saving video to {output_path} at {frame_rate} FPS...")
     
-    for i, frame in enumerate(frames):
+    for i, (frame, attention_mask) in enumerate(zip(frames, attention_masks)):
+        # Convert frame to BGR
         frame_bgr = hsv_to_bgr(frame)
+        
+        # Convert attention mask to colored visualization
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        
+        # Normalize attention mask and apply colormap
+        attention_squeezed = attention_mask.squeeze(0)  # Remove channel dimension
+        attention_norm = (attention_squeezed - attention_squeezed.min()) / (attention_squeezed.max() - attention_squeezed.min() + 1e-8)
+        attention_colored = cm.hot(attention_norm)
+        attention_rgb = (attention_colored[:, :, :3] * 255).astype(np.uint8)
+        
+        # Convert RGB to BGR for OpenCV
+        attention_bgr = cv2.cvtColor(attention_rgb, cv2.COLOR_RGB2BGR)
+        
+        # Concatenate frame and attention mask horizontally
+        combined_frame = np.concatenate([frame_bgr, attention_bgr], axis=1)
+        
         # Ensure frame is in correct format
-        frame_bgr = frame_bgr.astype(np.uint8)
-        out.write(frame_bgr)
+        combined_frame = combined_frame.astype(np.uint8)
+        out.write(combined_frame)
         
         if (i + 1) % 10 == 0:
             print(f"Saved {i + 1}/{len(frames)} frames")
@@ -139,7 +161,7 @@ def main():
     initial_frames = torch.rand(6, args.frame_height, args.frame_width, device=device)  # 2 HSV frames in [0, 1]
     
     # Generate video
-    generated_frames = generate_video(model, initial_frames, args.num_frames, device)
+    generated_frames, attention_masks = generate_video(model, initial_frames, args.num_frames, device)
     
     # Create output directory if it doesn't exist
     import os
@@ -147,7 +169,7 @@ def main():
     
     # Save video
     print("Saving generated video...")
-    save_video(generated_frames, args.output_path, args.frame_rate)
+    save_video(generated_frames, attention_masks, args.output_path, args.frame_rate)
 
 
 if __name__ == "__main__":
