@@ -169,7 +169,7 @@ def hsv_to_rgb(hsv_frame):
     return rgb_frame
 
 
-def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'):
+def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda', use_attention_mask=True):
     """Train the model for a single epoch on one video"""
     model = model.to(device)
     
@@ -201,7 +201,7 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         val_pbar = tqdm(val_loader, desc="Validation", leave=False)
         for sequences, targets in val_pbar:
             sequences, targets = sequences.to(device), targets.to(device)
-            loss, outputs, attention_mask = compute_loss(model, sequences, targets)
+            loss, outputs, attention_mask = compute_loss(model, sequences, targets, use_attention_mask=args.use_attention_mask)
             val_loss += loss.item()
             
             # Collect sample predictions for visualization
@@ -218,7 +218,7 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
     
     return train_loss, val_loss, (sample_predictions, sample_targets, sample_attention_masks) if sample_predictions else None
 
-def compute_loss(model, sequences, targets, mixing_rate = 0.85):
+def compute_loss(model, sequences, targets, mixing_rate = 0.85, use_attention_mask=True):
     loss = 0.0
     
     # Randomize mixing rate by +/- 0.5 of specified value
@@ -233,35 +233,38 @@ def compute_loss(model, sequences, targets, mixing_rate = 0.85):
 
     # predict 3rd frame using first and second frames
     first_and_second_frames_output, attention_mask_1 = model(first_and_second_frames)
-    loss += pixel_loss(first_and_second_frames_output, third_frame, attention_mask_1)
+    loss += pixel_loss(first_and_second_frames_output, third_frame, attention_mask_1, use_attention_mask)
 
     # predict 4th frame using second and third frames (mixed with 3rd frame prediction)
     mixed_middle_frame = (1-mixing_rate)*second_and_third_frames[:, 3:, :, :] + (mixing_rate)*first_and_second_frames_output
     middle_input_frames = torch.cat([second_and_third_frames[:, :3, :, :], mixed_middle_frame], dim=1)
     second_and_third_frames_output, attention_mask_2 = model(middle_input_frames)
-    loss += pixel_loss(second_and_third_frames_output, fourth_frame, attention_mask_2)
+    loss += pixel_loss(second_and_third_frames_output, fourth_frame, attention_mask_2, use_attention_mask)
 
     # predict 5th frame using 3rd and 4th frames (mixed with 4th and 3rd frame prediction)
     mixed_frame_3 = (1-mixing_rate)*third_and_fourth_frames[:, :3, :, :] + (mixing_rate)*first_and_second_frames_output
     mixed_frame_4 = (1-mixing_rate)*third_and_fourth_frames[:, 3:, :, :] + (mixing_rate)*second_and_third_frames_output
     input_frames = torch.cat([mixed_frame_3, mixed_frame_4], dim=1)
     target_prediction, attention_mask_3 = model(input_frames)
-    loss += pixel_loss(target_prediction, targets, attention_mask_3)
+    loss += pixel_loss(target_prediction, targets, attention_mask_3, use_attention_mask)
 
     return loss, target_prediction, attention_mask_3
 
-def pixel_loss(pred, target, attention_mask):
+def pixel_loss(pred, target, attention_mask, use_attention_mask=True):
     # mse loss weighted by attention mask
     errors = (pred - target)**2
-    errors *= attention_mask
+    if use_attention_mask:
+        errors *= attention_mask
     raw_pixel_loss = errors.sum()
 
     # entropy loss to encourage spread out attention mask
-    epsilon = 1e-8  # Prevent log(0)
-    entropy = -(attention_mask * torch.log(attention_mask + epsilon)).sum(dim=(2,3))  # Sum over H,W dims
-    entropy_loss = - 0.1 * entropy.mean()
-
-    return raw_pixel_loss + entropy_loss
+    if use_attention_mask:
+        epsilon = 1e-8  # Prevent log(0)
+        entropy = -(attention_mask * torch.log(attention_mask + epsilon)).sum(dim=(2,3))  # Sum over H,W dims
+        entropy_loss = - 0.1 * entropy.mean()
+        return raw_pixel_loss + entropy_loss
+    else:
+        return raw_pixel_loss
 
 youtube_video_urls = [
     "https://www.youtube.com/watch?v=YJbegTHnWhg",
@@ -292,6 +295,8 @@ def main():
                        help='Dropout rate for regularization')
     parser.add_argument('--num-workers', type=int, default=4, 
                        help='Number of workers for data loading')
+    parser.add_argument('--use-attention-mask', action='store_tru', default=False,
+                       help='Use attention masking in loss computation')
     
     args = parser.parse_args()
     
@@ -381,6 +386,7 @@ def main():
             "dropout_rate": args.dropout_rate,
             "num_epochs": args.num_epochs,
             "batch_size": args.batch_size,
+            "use_attention_mask": args.use_attention_mask,
         })
     
     # Train on each video
@@ -431,7 +437,7 @@ def main():
             
             # Train model on this video for one epoch
             result = train_single_epoch(
-                model, train_loader, test_loader, optimizer, device
+                model, train_loader, test_loader, optimizer, device, args.use_attention_mask
             )
             video_train_loss, video_val_loss, video_samples = result
             
