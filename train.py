@@ -255,7 +255,9 @@ def pixel_loss(pred, target, attention_mask, use_attention_mask=True):
     errors = (pred - target)**2
     if use_attention_mask:
         errors *= attention_mask
-    raw_pixel_loss = errors.sum()
+        raw_pixel_loss = errors.sum()
+    else:
+        raw_pixel_loss = errors.mean()
 
     # entropy loss to encourage spread out attention mask
     if use_attention_mask:
