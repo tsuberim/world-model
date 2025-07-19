@@ -201,7 +201,7 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         val_pbar = tqdm(val_loader, desc="Validation", leave=False)
         for sequences, targets in val_pbar:
             sequences, targets = sequences.to(device), targets.to(device)
-            loss, outputs, attention_mask = compute_loss(model, sequences, targets, use_attention_mask=args.use_attention_mask)
+            loss, outputs, attention_mask = compute_loss(model, sequences, targets, use_attention_mask=use_attention_mask)
             val_loss += loss.item()
             
             # Collect sample predictions for visualization
