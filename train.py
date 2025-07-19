@@ -136,16 +136,16 @@ def video_to_hsv_frames(video_path, frame_width=96, frame_height=64, target_fps=
     return frames
 
 
-def create_sequences(frames, sequence_length=2):
+def create_sequences(frames, sequence_length=4):
     """Create sequences of frames for training"""
     sequences = []
     targets = []
     
     for i in range(len(frames) - sequence_length):
-        # Get 2 previous frames
+        # Get 4 consecutive frames
         sequence = frames[i:i+sequence_length]
-        # Target is the next frame
-        target = frames[i+sequence_length]
+        # Target is the 4th frame
+        target = frames[i+sequence_length-1]
         
         # Concatenate sequence frames along channel dimension
         sequence_concatenated = np.concatenate(sequence, axis=0)
@@ -182,11 +182,9 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         sequences, targets = sequences.to(device), targets.to(device)
         
         optimizer.zero_grad()
-        outputs = model(sequences)
-        loss = criterion(outputs, targets)
+        loss, outputs = compute_loss(model, sequences, targets, criterion)
         loss.backward()
         optimizer.step()
-        
         train_loss += loss.item()
         train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
     
@@ -200,8 +198,7 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         val_pbar = tqdm(val_loader, desc="Validation", leave=False)
         for sequences, targets in val_pbar:
             sequences, targets = sequences.to(device), targets.to(device)
-            outputs = model(sequences)
-            loss = criterion(outputs, targets)
+            loss, outputs = compute_loss(model, sequences, targets, criterion)
             val_loss += loss.item()
             
             # Collect sample predictions for visualization
@@ -217,10 +214,43 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
     
     return train_loss, val_loss, (sample_predictions, sample_targets) if sample_predictions else None
 
+def compute_loss(model, sequences, targets, criterion, mixing_rate = 0.85):
+    loss = 0.0
+    
+    first_and_second_frames = sequences[:, :6, :, :]
+    second_and_third_frames = sequences[:, 3:9, :, :]
+    third_and_fourth_frames = sequences[:, 6:, :, :]
+
+    third_frame = sequences[:, 6:9, :, :]
+    fourth_frame = sequences[:, 9:, :, :]
+
+    # predict 3rd frame using first and second frames
+    first_and_second_frames_output = model(first_and_second_frames)
+    loss += criterion(first_and_second_frames_output, third_frame)
+
+    # predict 4th frame using second and third frames (mixed with 3rd frame prediction)
+    mixed_middle_frame = (1-mixing_rate)*second_and_third_frames[:, 3:, :, :] + (mixing_rate)*first_and_second_frames_output
+    middle_input_frames = torch.cat([second_and_third_frames[:, :3, :, :], mixed_middle_frame], dim=1)
+    second_and_third_frames_output = model(middle_input_frames)
+    loss += criterion(second_and_third_frames_output, fourth_frame)
+
+    # predict 5th frame using 3rd and 4th frames (mixed with 4th and 3rd frame prediction)
+    mixed_frame_3 = (1-mixing_rate)*third_and_fourth_frames[:, :3, :, :] + (mixing_rate)*first_and_second_frames_output
+    mixed_frame_4 = (1-mixing_rate)*third_and_fourth_frames[:, 3:, :, :] + (mixing_rate)*second_and_third_frames_output
+    input_frames = torch.cat([mixed_frame_3, mixed_frame_4], dim=1)
+    target_prediction = model(input_frames)
+    loss += criterion(target_prediction, targets)
+
+    return loss, target_prediction
+
+
 youtube_video_urls = [
     "https://www.youtube.com/watch?v=V-mwW526RVU",
     "https://www.youtube.com/watch?v=Tyi5S76cZ-s",
-    "https://www.youtube.com/watch?v=d_WFTzQYJ7g"
+    "https://www.youtube.com/watch?v=d_WFTzQYJ7g",
+    # "https://www.youtube.com/watch?v=0fts6x_EE_E",
+    # "https://www.youtube.com/watch?v=BSaOoL6Dte4",
+    # "https://www.youtube.com/watch?v=ICJvn8h4I7g"
 ]
 
 def main():
@@ -321,7 +351,7 @@ def main():
                 continue
             
             # Create sequences
-            sequences, targets = create_sequences(frames, sequence_length=2)
+            sequences, targets = create_sequences(frames, sequence_length=4)
             
             # Split into train/test
             X_train, X_test, y_train, y_test = train_test_split(
