@@ -189,7 +189,7 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         
         optimizer.step()
         train_losses.append(loss.item())
-        train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+        train_pbar.set_postfix({'loss': f'{np.mean(train_losses):.4f}'})
     
     # Validation
     model.eval()
