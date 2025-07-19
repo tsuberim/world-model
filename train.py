@@ -221,6 +221,9 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
 def compute_loss(model, sequences, targets, mixing_rate = 0.85):
     loss = 0.0
     
+    # Randomize mixing rate by +/- 0.5 of specified value
+    mixing_rate = mixing_rate + (torch.rand(1).item() - 0.5) * mixing_rate
+
     first_and_second_frames = sequences[:, :6, :, :]
     second_and_third_frames = sequences[:, 3:9, :, :]
     third_and_fourth_frames = sequences[:, 6:, :, :]

@@ -2,6 +2,7 @@ import torch
 import cv2
 import numpy as np
 import argparse
+import os
 from model import create_unet
 
 
@@ -135,6 +136,8 @@ def main():
                        help='Frame rate for video')
     parser.add_argument('--output-path', default='output/generated_video.mp4', 
                        help='Output video path')
+    parser.add_argument('--source-video', type=int, default=0, 
+                       help='Index of source video to sample initial frames from (0-2)')
     
     args = parser.parse_args()
     
@@ -156,9 +159,34 @@ def main():
         print(f"Checkpoint file not found: {args.checkpoint}")
         return
     
-    # Create initial frames (random normalized HSV frames)
-    print("Creating initial frames...")
-    initial_frames = torch.rand(6, args.frame_height, args.frame_width, device=device)  # 2 HSV frames in [0, 1]
+    # Import video URLs from train.py
+    from train import youtube_video_urls
+    
+    # Sample initial frames from the specified video
+    print(f"Sampling initial frames from video {args.source_video}...")
+    source_url = youtube_video_urls[args.source_video]
+    
+    # Download video if not already downloaded
+    from train import download_youtube_video, video_to_hsv_frames
+    video_path = download_youtube_video(source_url)
+    
+    # Load frames
+    frames = video_to_hsv_frames(video_path, args.frame_width, args.frame_height, target_fps=6)
+    
+    if len(frames) < 2:
+        print("Error: Not enough frames in source video")
+        return
+    
+    # Sample 2 consecutive frames from a random point in the video
+    import random
+    max_start_point = len(frames) - 2  # Ensure we have 2 consecutive frames
+    start_point = random.randint(0, max_start_point)
+    frame1 = frames[start_point]
+    frame2 = frames[start_point + 1]
+    
+    # Concatenate the 2 frames (each has 3 channels, so total 6 channels)
+    initial_frames = np.concatenate([frame1, frame2], axis=0)
+    initial_frames = torch.from_numpy(initial_frames).float().to(device)
     
     # Generate video
     generated_frames, attention_masks = generate_video(model, initial_frames, args.num_frames, device)
