@@ -407,7 +407,7 @@ def main():
             "num_epochs": args.num_epochs,
             "batch_size": args.batch_size,
             "use_attention_mask": args.use_attention_mask,
-        })
+        }, name=f"use_attention_mask_{args.use_attention_mask}")
     
     # Train on each video
     for epoch in range(start_epoch, args.num_epochs):
