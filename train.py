@@ -278,7 +278,7 @@ def main():
                        help='Frame width')
     parser.add_argument('--frame-height', type=int, default=64, 
                        help='Frame height')
-    parser.add_argument('--model-size', type=int, default=16, 
+    parser.add_argument('--model-size', type=int, default=48, 
                        help='Model size')
     parser.add_argument('--batch-size', type=int, default=32, 
                        help='Batch size for training')
@@ -369,10 +369,13 @@ def main():
         wandb.init(project="world-model", id=wandb_run_id, resume="must")
     else:
         # Start new run
+        # Get the underlying model for accessing attributes
+        underlying_model = model.module if isinstance(model, torch.nn.DataParallel) else model
+        
         wandb.init(project="world-model", config={
-            "model_size": model.model_size,
-            "frame_width": model.frame_width,
-            "frame_height": model.frame_height,
+            "model_size": underlying_model.model_size,
+            "frame_width": underlying_model.frame_width,
+            "frame_height": underlying_model.frame_height,
             "learning_rate": args.learning_rate,
             "weight_decay": args.weight_decay,
             "dropout_rate": args.dropout_rate,
