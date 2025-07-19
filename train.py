@@ -181,7 +181,7 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         sequences, targets = sequences.to(device), targets.to(device)
         
         optimizer.zero_grad()
-        loss, outputs, attention_mask = compute_loss(model, sequences, targets)
+        loss, outputs, attention_mask = compute_loss(model, sequences, targets, use_attention_mask=use_attention_mask)
         loss.backward()
         
         # Gradient clipping to prevent exploding gradients
@@ -436,9 +436,7 @@ def main():
                                    num_workers=args.num_workers, pin_memory=True)
             
             # Train model on this video for one epoch
-            result = train_single_epoch(
-                model, train_loader, test_loader, optimizer, device, args.use_attention_mask
-            )
+            result = train_single_epoch(model, train_loader, test_loader, optimizer, device, args.use_attention_mask)
             video_train_loss, video_val_loss, video_samples = result
             
             # Accumulate losses and samples
