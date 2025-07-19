@@ -175,7 +175,7 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
     
     # Training
     model.train()
-    train_loss = 0.0
+    train_losses = []
     train_pbar = tqdm(train_loader, desc="Training", leave=False)
     for batch_idx, (sequences, targets) in enumerate(train_pbar):
         sequences, targets = sequences.to(device), targets.to(device)
@@ -188,12 +188,12 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         
         optimizer.step()
-        train_loss += loss.item()
+        train_losses.append(loss.item())
         train_pbar.set_postfix({'loss': f'{loss.item():.4f}'})
     
     # Validation
     model.eval()
-    val_loss = 0.0
+    val_losses = []
     sample_predictions = []
     sample_targets = []
     sample_attention_masks = []
@@ -202,7 +202,7 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
         for sequences, targets in val_pbar:
             sequences, targets = sequences.to(device), targets.to(device)
             loss, outputs, attention_mask = compute_loss(model, sequences, targets, use_attention_mask=use_attention_mask)
-            val_loss += loss.item()
+            val_losses.append(loss.item())
             
             # Collect sample predictions for visualization
             if len(sample_predictions) < 4:  # Save first 4 samples
@@ -211,8 +211,8 @@ def train_single_epoch(model, train_loader, val_loader, optimizer, device='cuda'
                     sample_targets.append(targets[i].cpu().numpy())
                     sample_attention_masks.append(attention_mask[i].cpu().numpy())
     
-    train_loss /= len(train_loader)
-    val_loss /= len(val_loader)
+    train_loss = np.mean(train_losses)
+    val_loss = np.mean(val_losses)
     
     print(f'Video training complete: Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
     
