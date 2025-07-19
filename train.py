@@ -265,6 +265,8 @@ def pixel_loss(pred, target, attention_mask):
 
 youtube_video_urls = [
     "https://www.youtube.com/watch?v=YJbegTHnWhg",
+    "https://www.youtube.com/watch?v=oo9c9HC-pmM",
+    "https://www.youtube.com/watch?v=DSsf9pQkDt8",
 ]
 
 def main():
